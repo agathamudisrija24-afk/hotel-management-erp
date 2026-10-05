@@ -1,0 +1,3 @@
+'use client';
+import {useEffect,useState} from 'react'; import {api} from '../../lib/api';
+export default function Notifications(){const [items,setItems]=useState<any[]>(),[error,setError]=useState('');useEffect(()=>{api('/notifications').then(x=>setItems(x.items)).catch(e=>setError(e.message))},[]);return <main className="wrap"><h1>Notifications</h1>{error?<p>{error}</p>:!items?<p>Loading notifications…</p>:items.length===0?<p>You have no notifications.</p>:items.map(n=><article className="card" key={n.id}><b>{n.type}</b><p>{n.body}</p><small>{n.read?'Read':'Unread'}</small></article>)}</main>}

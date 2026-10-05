@@ -1,0 +1,21 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Python environments, caches, and local databases
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+
+# Node/build output
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# OS/editor files
+.DS_Store
