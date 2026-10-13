@@ -1,10 +1,13 @@
+
 name: Hotel Management CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -24,12 +27,15 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+
+      - name: Install locked dependencies
+        run: npm ci
 
   frontend-types:
     name: Frontend TypeScript
@@ -40,11 +46,13 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
       - run: npm ci
       - run: npx tsc --noEmit
 
@@ -57,11 +65,13 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
       - run: npm ci
       - run: npm run build
 
@@ -74,12 +84,17 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm audit --audit-level=high
+
+      - run: npm ci
+
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=high
 
   backend-install:
     name: Backend dependencies
@@ -90,11 +105,13 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.txt
       - run: python -c "import fastapi, sqlalchemy, alembic, jwt"
@@ -105,9 +122,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
+
       - run: python -m compileall -q backend/app backend/migrations backend/tests
 
   backend-tests:
@@ -123,11 +142,13 @@ jobs:
       PAYMENT_PROVIDER: mock
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
       - run: python -m pip install -r requirements.txt
       - run: python -m pytest -q
 
@@ -140,13 +161,18 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - run: python -m pip install pip-audit
-      - run: pip-audit -r requirements.txt
+
+      - name: Install audit tool
+        run: python -m pip install pip-audit
+
+      - name: Audit backend dependencies
+        run: pip-audit -r requirements.txt
 
   migrations:
     name: Alembic migration graph
@@ -159,11 +185,13 @@ jobs:
       DATABASE_URL: sqlite:///./migration_ci.db
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
       - run: python -m pip install -r requirements.txt
       - run: alembic history
       - run: alembic heads
@@ -174,11 +202,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Reject merge conflict markers in tracked source
+
+      - name: Reject merge conflict markers
         shell: bash
         run: |
           if git grep -n -E '^(<<<<<<< |=======|>>>>>>> )' -- ':!*.lock'; then
-            echo 'Merge conflict markers found.'
+            echo "Merge conflict markers found."
             exit 1
           fi
 
@@ -190,6 +219,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -208,7 +238,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Run actionlint
+
+      - name: Validate workflow syntax
         uses: docker://rhysd/actionlint:1.7.12
         with:
           args: -color
@@ -234,6 +265,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Report required verification results
+        shell: bash
         env:
           FRONTEND_INSTALL: ${{ needs.frontend-install.result }}
           FRONTEND_TYPES: ${{ needs.frontend-types.result }}
@@ -249,27 +281,36 @@ jobs:
           COMPOSE_CONFIG: ${{ needs.compose-config.result }}
           WORKFLOW_YAML: ${{ needs.workflow-yaml.result }}
         run: |
-          printf '%s\n' \
-            "Frontend dependencies: $FRONTEND_INSTALL" \
-            "Frontend TypeScript: $FRONTEND_TYPES" \
-            "Frontend production build: $FRONTEND_BUILD" \
-            "Frontend dependency audit: $FRONTEND_AUDIT" \
-            "Backend dependencies: $BACKEND_INSTALL" \
-            "Backend compilation: $BACKEND_COMPILE" \
-            "Backend API tests: $BACKEND_TESTS" \
-            "Backend dependency audit: $BACKEND_AUDIT" \
-            "Alembic migration graph: $MIGRATIONS" \
-            "Conflict marker scan: $REPOSITORY_HYGIENE" \
-            "Secret scan: $SECRET_SCAN" \
-            "Docker Compose config: $COMPOSE_CONFIG" \
-            "Workflow YAML syntax: $WORKFLOW_YAML"
           failed=0
-          for result in "$FRONTEND_INSTALL" "$FRONTEND_TYPES" "$FRONTEND_BUILD" "$FRONTEND_AUDIT" "$BACKEND_INSTALL" "$BACKEND_COMPILE" "$BACKEND_TESTS" "$BACKEND_AUDIT" "$MIGRATIONS" "$REPOSITORY_HYGIENE" "$SECRET_SCAN" "$COMPOSE_CONFIG" "$WORKFLOW_YAML"; do
+
+          report_check() {
+            local name="$1"
+            local result="$2"
+
+            printf '%-35s %s\n' "$name" "$result"
+
             if [[ "$result" != "success" ]]; then
               failed=1
             fi
-          done
+          }
+
+          report_check "Frontend dependencies" "$FRONTEND_INSTALL"
+          report_check "Frontend TypeScript" "$FRONTEND_TYPES"
+          report_check "Frontend production build" "$FRONTEND_BUILD"
+          report_check "Frontend dependency audit" "$FRONTEND_AUDIT"
+          report_check "Backend dependencies" "$BACKEND_INSTALL"
+          report_check "Backend Python compilation" "$BACKEND_COMPILE"
+          report_check "Backend API tests" "$BACKEND_TESTS"
+          report_check "Backend dependency audit" "$BACKEND_AUDIT"
+          report_check "Alembic migration graph" "$MIGRATIONS"
+          report_check "Conflict marker scan" "$REPOSITORY_HYGIENE"
+          report_check "Secret scan" "$SECRET_SCAN"
+          report_check "Docker Compose configuration" "$COMPOSE_CONFIG"
+          report_check "Workflow YAML lint" "$WORKFLOW_YAML"
+
           if [[ "$failed" -ne 0 ]]; then
-            echo 'One or more required checks failed or were skipped.'
+            echo "One or more required checks failed or were skipped."
             exit 1
           fi
+
+          echo "All required CI checks passed."
