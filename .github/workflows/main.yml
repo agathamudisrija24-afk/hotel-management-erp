@@ -203,16 +203,20 @@ jobs:
       - run: docker compose config --quiet
 
   workflow-yaml:
-    name: Workflow YAML syntax
+    name: GitHub Actions workflow lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - run: ruby -e "require 'yaml'; YAML.load_file('.github/workflows/ci.yml')"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml
 
   ci-summary:
     name: Required checks summary
-    if: always()
+    if: ${{ always() }}
     needs:
       - frontend-install
       - frontend-types
@@ -260,7 +264,13 @@ jobs:
             "Secret scan: $SECRET_SCAN" \
             "Docker Compose config: $COMPOSE_CONFIG" \
             "Workflow YAML syntax: $WORKFLOW_YAML"
-          if [[ "$FRONTEND_INSTALL $FRONTEND_TYPES $FRONTEND_BUILD $FRONTEND_AUDIT $BACKEND_INSTALL $BACKEND_COMPILE $BACKEND_TESTS $BACKEND_AUDIT $MIGRATIONS $REPOSITORY_HYGIENE $SECRET_SCAN $COMPOSE_CONFIG $WORKFLOW_YAML" != "success success success success success success success success success success success success success" ]]; then
+          failed=0
+          for result in "$FRONTEND_INSTALL" "$FRONTEND_TYPES" "$FRONTEND_BUILD" "$FRONTEND_AUDIT" "$BACKEND_INSTALL" "$BACKEND_COMPILE" "$BACKEND_TESTS" "$BACKEND_AUDIT" "$MIGRATIONS" "$REPOSITORY_HYGIENE" "$SECRET_SCAN" "$COMPOSE_CONFIG" "$WORKFLOW_YAML"; do
+            if [[ "$result" != "success" ]]; then
+              failed=1
+            fi
+          done
+          if [[ "$failed" -ne 0 ]]; then
             echo 'One or more required checks failed or were skipped.'
             exit 1
           fi
