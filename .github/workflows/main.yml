@@ -208,11 +208,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12
         with:
-          go-version: '1.23'
-          cache: false
-      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/ci.yml
+          args: -color
 
   ci-summary:
     name: Required checks summary
