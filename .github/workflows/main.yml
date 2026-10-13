@@ -1,0 +1,266 @@
+name: Hotel Management CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-install:
+    name: Frontend dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+
+  frontend-types:
+    name: Frontend TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  frontend-build:
+    name: Frontend production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  frontend-audit:
+    name: Frontend dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm audit --audit-level=high
+
+  backend-install:
+    name: Backend dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -c "import fastapi, sqlalchemy, alembic, jwt"
+
+  backend-compile:
+    name: Backend Python compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m compileall -q backend/app backend/migrations backend/tests
+
+  backend-tests:
+    name: Backend API tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: sqlite:///./ci_test.db
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      PAYMENT_PROVIDER: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  backend-audit:
+    name: Backend dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install pip-audit
+      - run: pip-audit -r requirements.txt
+
+  migrations:
+    name: Alembic migration graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: sqlite:///./migration_ci.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: alembic history
+      - run: alembic heads
+
+  repository-hygiene:
+    name: Conflict marker scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject merge conflict markers in tracked source
+        shell: bash
+        run: |
+          if git grep -n -E '^(<<<<<<< |=======|>>>>>>> )' -- ':!*.lock'; then
+            echo 'Merge conflict markers found.'
+            exit 1
+          fi
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  compose-config:
+    name: Docker Compose configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+
+  workflow-yaml:
+    name: Workflow YAML syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: ruby -e "require 'yaml'; YAML.load_file('.github/workflows/ci.yml')"
+
+  ci-summary:
+    name: Required checks summary
+    if: always()
+    needs:
+      - frontend-install
+      - frontend-types
+      - frontend-build
+      - frontend-audit
+      - backend-install
+      - backend-compile
+      - backend-tests
+      - backend-audit
+      - migrations
+      - repository-hygiene
+      - secret-scan
+      - compose-config
+      - workflow-yaml
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report required verification results
+        env:
+          FRONTEND_INSTALL: ${{ needs.frontend-install.result }}
+          FRONTEND_TYPES: ${{ needs.frontend-types.result }}
+          FRONTEND_BUILD: ${{ needs.frontend-build.result }}
+          FRONTEND_AUDIT: ${{ needs.frontend-audit.result }}
+          BACKEND_INSTALL: ${{ needs.backend-install.result }}
+          BACKEND_COMPILE: ${{ needs.backend-compile.result }}
+          BACKEND_TESTS: ${{ needs.backend-tests.result }}
+          BACKEND_AUDIT: ${{ needs.backend-audit.result }}
+          MIGRATIONS: ${{ needs.migrations.result }}
+          REPOSITORY_HYGIENE: ${{ needs.repository-hygiene.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          COMPOSE_CONFIG: ${{ needs.compose-config.result }}
+          WORKFLOW_YAML: ${{ needs.workflow-yaml.result }}
+        run: |
+          printf '%s\n' \
+            "Frontend dependencies: $FRONTEND_INSTALL" \
+            "Frontend TypeScript: $FRONTEND_TYPES" \
+            "Frontend production build: $FRONTEND_BUILD" \
+            "Frontend dependency audit: $FRONTEND_AUDIT" \
+            "Backend dependencies: $BACKEND_INSTALL" \
+            "Backend compilation: $BACKEND_COMPILE" \
+            "Backend API tests: $BACKEND_TESTS" \
+            "Backend dependency audit: $BACKEND_AUDIT" \
+            "Alembic migration graph: $MIGRATIONS" \
+            "Conflict marker scan: $REPOSITORY_HYGIENE" \
+            "Secret scan: $SECRET_SCAN" \
+            "Docker Compose config: $COMPOSE_CONFIG" \
+            "Workflow YAML syntax: $WORKFLOW_YAML"
+          if [[ "$FRONTEND_INSTALL $FRONTEND_TYPES $FRONTEND_BUILD $FRONTEND_AUDIT $BACKEND_INSTALL $BACKEND_COMPILE $BACKEND_TESTS $BACKEND_AUDIT $MIGRATIONS $REPOSITORY_HYGIENE $SECRET_SCAN $COMPOSE_CONFIG $WORKFLOW_YAML" != "success success success success success success success success success success success success success" ]]; then
+            echo 'One or more required checks failed or were skipped.'
+            exit 1
+          fi
