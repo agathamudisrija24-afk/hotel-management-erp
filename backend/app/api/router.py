@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import re
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -7,8 +8,15 @@ from app.db.session import get_db
 from app.models.models import *
 from app.core.security import hash_password,verify_password,token
 from app.api.deps import current_user, optional_current_user, require, can_access_hotel
-from app.services.booking import available_rooms,create_booking
+from app.services.booking import available_rooms,create_booking,validate_dates
 api=APIRouter()
+def parse_booking_date(value: str) -> date:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise HTTPException(422, "Dates must use the YYYY-MM-DD format with a four-digit year")
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(422, "Enter a valid calendar date")
 class Register(BaseModel): email: EmailStr; password: str=Field(min_length=8); name: str
 class Login(BaseModel): email: EmailStr; password: str
 class ProfileUpdate(BaseModel): name: str = Field(min_length=1, max_length=150); phone: str = Field(default="", max_length=30)
@@ -68,13 +76,14 @@ def hotel(hotel_id:str,db:Session=Depends(get_db)):
     return result
 @api.get('/availability')
 def availability(room_type_id:str,check_in:str,check_out:str,db:Session=Depends(get_db)):
-    from datetime import date
-    rooms=available_rooms(db,room_type_id,date.fromisoformat(check_in),date.fromisoformat(check_out)); return {"available":len(rooms)}
+    start, end = parse_booking_date(check_in), parse_booking_date(check_out)
+    validate_dates(start, end)
+    rooms=available_rooms(db,room_type_id,start,end); return {"available":len(rooms)}
 class BookingIn(BaseModel): hotel_id:str; room_type_id:str; check_in:str; check_out:str; guests:int=1
 @api.post('/bookings',status_code=201)
 def booking(body:BookingIn,idempotency_key:str|None=Header(default=None),user=Depends(current_user),db:Session=Depends(get_db)):
-    from datetime import date
-    b=create_booking(db,user,body.hotel_id,body.room_type_id,date.fromisoformat(body.check_in),date.fromisoformat(body.check_out),body.guests,idempotency_key); db.commit(); return booking_out(b)
+    start, end = parse_booking_date(body.check_in), parse_booking_date(body.check_out)
+    b=create_booking(db,user,body.hotel_id,body.room_type_id,start,end,body.guests,idempotency_key); db.commit(); return booking_out(b)
 def booking_out(b, db: Session | None = None):
     hotel = db.get(Hotel, b.hotel_id) if db else None
     lines = []

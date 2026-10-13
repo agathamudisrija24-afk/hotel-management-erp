@@ -1,5 +1,6 @@
 import os
 import pytest
+from datetime import date, timedelta
 from uuid import uuid4
 os.environ["DATABASE_URL"]="sqlite:///./test_hotel.db"
 from fastapi.testclient import TestClient
@@ -27,6 +28,22 @@ def test_search_and_booking_flow(client):
     booking=b.json(); assert booking['status']=='pending_payment'
     p=client.post('/api/v1/payments/initiate?booking_id='+booking['id'],headers={**headers,'Idempotency-Key':'payment-'+str(uuid4())}); assert p.status_code==200
     done=client.post('/api/v1/payments/'+p.json()['payment_id']+'/verify',headers=headers); assert done.json()['booking']['status']=='confirmed'
+
+def test_availability_rejects_invalid_date_strings_and_dates(client):
+    room = client.get('/api/v1/hotels').json()['items'][0]['room_types'][0]
+    start = date.today() + timedelta(days=30)
+    end = start + timedelta(days=2)
+    params = f"room_type_id={room['id']}"
+    assert client.get(f"/api/v1/availability?{params}&check_in={start.isoformat()}&check_out={end.isoformat()}").status_code == 200
+    assert client.get('/api/v1/availability', params={'room_type_id': room['id'], 'check_in': start.isoformat(), 'check_out': start.isoformat()}).status_code == 422
+    past = date.today() - timedelta(days=1)
+    assert client.get('/api/v1/availability', params={'room_type_id': room['id'], 'check_in': past.isoformat(), 'check_out': start.isoformat()}).status_code == 422
+    for field in ('check_in', 'check_out'):
+        invalid_params = {'check_in': start.isoformat(), 'check_out': end.isoformat()}
+        invalid_params[field] = '202600-10-20'
+        assert client.get('/api/v1/availability', params={**{'room_type_id': room['id']}, **invalid_params}).status_code == 422
+        invalid_params[field] = '2026-02-31'
+        assert client.get('/api/v1/availability', params={**{'room_type_id': room['id']}, **invalid_params}).status_code == 422
 def test_permissions_require_authentication(client):
     assert client.get('/api/v1/bookings').status_code==401
     assert client.get('/api/v1/admin/reports/summary',headers={'Authorization':'Bearer '+login(client)}).status_code==403
